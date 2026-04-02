@@ -7,73 +7,76 @@ st.set_page_config(page_title="Automação de Fechamento", layout="wide")
 st.title("📊 Automação de Conferência ICMS/IPI")
 st.markdown("Arraste sua planilha aqui para processar as colunas de conferência automaticamente.")
 
-# Função auxiliar para inserir coluna ao lado de outra
+# Função para inserir coluna em posição específica
 def inserir_coluna_ao_lado(df, coluna_referencia, nova_coluna, valores):
     if coluna_referencia in df.columns:
         idx = df.columns.get_loc(coluna_referencia) + 1
         df.insert(idx, nova_coluna, valores)
     else:
-        df[nova_coluna] = valores # Fallback se não achar a coluna
+        df[nova_coluna] = valores
 
 uploaded_file = st.file_uploader("Upload da Planilha Excel", type="xlsx")
 
 if uploaded_file:
     try:
-        # 1. Carregar as abas
-        df_detalhe = pd.read_excel(uploaded_file, sheet_name='Detalhamento')
-        df_grade = pd.read_excel(uploaded_file, sheet_name='Grade')
+        # 1. Carregar as abas (Ignorando espaços extras nos nomes das abas)
+        xls = pd.ExcelFile(uploaded_file)
+        aba_detalhe = [s for s in xls.sheet_names if 'detalhamento' in s.lower()][0]
+        aba_grade = [s for s in xls.sheet_names if 'grade' in s.lower()][0]
+        
+        df_detalhe = pd.read_excel(uploaded_file, sheet_name=aba_detalhe)
+        df_grade = pd.read_excel(uploaded_file, sheet_name=aba_grade)
 
-        st.info("Planilha carregada com sucesso! Processando regras...")
+        st.info("Planilha carregada! Processando...")
 
-        # --- PREPARAÇÃO DA ABA GRADE (PROCX por índice de colunas D, K, R) ---
-        # Excel Colunas: D=3, K=10, R=17 (No Python começa do 0)
-        df_grade_subset = df_grade.iloc[:, [3, 10, 17]].copy()
-        df_grade_subset.columns = ['CHAVE_GRADE', 'VAL_ICMS_GRADE', 'VAL_IPI_GRADE']
+        # --- PREPARAÇÃO DA ABA GRADE (PROCX) ---
+        # Pegando Coluna D (Chave), K (Icms), R (Ipi) pelo índice (0, 1, 2...)
+        # D=3, K=10, R=16 (ou 17 dependendo se há colunas vazias, vamos garantir)
+        df_grade_resumo = df_grade.iloc[:, [3, 10, 16]].copy() 
+        df_grade_resumo.columns = ['CHAVE_BUSCA', 'ICMS_GRADE_VAL', 'IPI_GRADE_VAL']
 
-        # Join (Simulação do PROCX de Chave para Chave)
-        df_merged = pd.merge(
-            df_detalhe, 
-            df_grade_subset, 
+        # Join (Merge) para trazer os valores da Grade para o Detalhamento
+        df_temp = pd.merge(
+            df_detalhe[['CHAVE', 'ALIQUOTA ICMS', 'BASE DE CALCULO ICMS', 'VALOR ICMS', 'ALIQUOTA IPI', 'BASE DE CALCULO IPI', 'VALOR IPI']], 
+            df_grade_resumo, 
             left_on='CHAVE', 
-            right_on='CHAVE_GRADE', 
+            right_on='CHAVE_BUSCA', 
             how='left'
         )
 
-        # Tratamento de valores nulos ou textos para evitar erro em cálculos matemáticos
-        df_merged['ALIQUOTA ICMS'] = pd.to_numeric(df_merged['ALIQUOTA ICMS'], errors='coerce').fillna(0)
-        df_merged['VAL_ICMS_GRADE'] = pd.to_numeric(df_merged['VAL_ICMS_GRADE'], errors='coerce').fillna(0)
-        df_merged['BASE DE CALCULO ICMS'] = pd.to_numeric(df_merged['BASE DE CALCULO ICMS'], errors='coerce').fillna(0)
-        df_merged['VALOR ICMS'] = pd.to_numeric(df_merged['VALOR ICMS'], errors='coerce').fillna(0)
-        
-        df_merged['ALIQUOTA IPI'] = pd.to_numeric(df_merged['ALIQUOTA IPI'], errors='coerce').fillna(0)
-        df_merged['VAL_IPI_GRADE'] = pd.to_numeric(df_merged['VAL_IPI_GRADE'], errors='coerce').fillna(0)
-        df_merged['BASE DE CALCULO IPI'] = pd.to_numeric(df_merged['BASE DE CALCULO IPI'], errors='coerce').fillna(0)
-        df_merged['VALOR IPI'] = pd.to_numeric(df_merged['VALOR IPI'], errors='coerce').fillna(0)
+        # Converter colunas para números (evita erro de cálculo se houver texto ou vazio)
+        cols_para_converter = [
+            'ALIQUOTA ICMS', 'ICMS_GRADE_VAL', 'BASE DE CALCULO ICMS', 'VALOR ICMS',
+            'ALIQUOTA IPI', 'IPI_GRADE_VAL', 'BASE DE CALCULO IPI', 'VALOR IPI'
+        ]
+        for col in cols_para_converter:
+            df_temp[col] = pd.to_numeric(df_temp[col], errors='coerce').fillna(0)
 
-        # --- LÓGICA DO ICMS ---
-        aliq_icms_grade = df_merged['VAL_ICMS_GRADE']
-        conf_aliq_icms = df_merged['ALIQUOTA ICMS'] == df_merged['VAL_ICMS_GRADE']
-        conf_val_icms = (df_merged['BASE DE CALCULO ICMS'] * (df_merged['ALIQUOTA ICMS'] / 100)) - df_merged['VALOR ICMS']
+        # --- CÁLCULOS ICMS ---
+        aliq_icms_grade_valores = df_temp['ICMS_GRADE_VAL']
+        conf_aliq_icms_valores = df_temp['ALIQUOTA ICMS'] == df_temp['ICMS_GRADE_VAL']
+        conf_val_icms_valores = (df_temp['BASE DE CALCULO ICMS'] * (df_temp['ALIQUOTA ICMS'] / 100)) - df_temp['VALOR ICMS']
 
-        # Inserindo as colunas no lugar certo (uma ao lado da outra)
-        inserir_coluna_ao_lado(df_detalhe, 'ALIQUOTA ICMS', 'ALÍQUOTA ICMS GRADE', aliq_icms_grade)
-        inserir_coluna_ao_lado(df_detalhe, 'ALÍQUOTA ICMS GRADE', 'CONFERÊNCIA ALÍQUOTA ICMS', conf_aliq_icms)
-        inserir_coluna_ao_lado(df_detalhe, 'VALOR ICMS', 'CONFERÊNCIA VALOR ICMS', conf_val_icms)
+        # --- CÁLCULOS IPI ---
+        aliq_ipi_grade_valores = df_temp['IPI_GRADE_VAL']
+        conf_aliq_ipi_valores = df_temp['ALIQUOTA IPI'] == df_temp['IPI_GRADE_VAL']
+        conf_val_ipi_valores = (df_temp['BASE DE CALCULO IPI'] * (df_temp['ALIQUOTA IPI'] / 100)) - df_temp['VALOR IPI']
 
-        # --- LÓGICA DO IPI ---
-        aliq_ipi_grade = df_merged['VAL_IPI_GRADE']
-        conf_aliq_ipi = df_merged['ALIQUOTA IPI'] == df_merged['ALIQUOTA IPI GRADE']
-        conf_val_ipi = (df_merged['BASE DE CALCULO IPI'] * (df_merged['ALIQUOTA IPI'] / 100)) - df_merged['VALOR IPI']
+        # --- INSERÇÃO DAS COLUNAS NO DF ORIGINAL ---
+        # ICMS
+        inserir_coluna_ao_lado(df_detalhe, 'ALIQUOTA ICMS', 'ALÍQUOTA ICMS GRADE', aliq_icms_grade_valores)
+        inserir_coluna_ao_lado(df_detalhe, 'ALÍQUOTA ICMS GRADE', 'CONFERÊNCIA ALÍQUOTA ICMS', conf_aliq_icms_valores)
+        inserir_coluna_ao_lado(df_detalhe, 'VALOR ICMS', 'CONFERÊNCIA VALOR ICMS', conf_val_icms_valores)
 
-        # Inserindo as colunas no lugar certo
-        inserir_coluna_ao_lado(df_detalhe, 'ALIQUOTA IPI', 'ALIQUOTA IPI GRADE', aliq_ipi_grade)
-        inserir_coluna_ao_lado(df_detalhe, 'ALIQUOTA IPI GRADE', 'CONFERÊNCIA ALÍQUOTA IPI', conf_aliq_ipi)
-        inserir_coluna_ao_lado(df_detalhe, 'VALOR IPI', 'CONFERÊNCIA VALOR IPI', conf_val_ipi)
+        # IPI
+        inserir_coluna_ao_lado(df_detalhe, 'ALIQUOTA IPI', 'ALIQUOTA IPI GRADE', aliq_ipi_grade_valores)
+        inserir_coluna_ao_lado(df_detalhe, 'ALIQUOTA IPI GRADE', 'CONFERÊNCIA ALÍQUOTA IPI', conf_aliq_ipi_valores)
+        inserir_coluna_ao_lado(df_detalhe, 'VALOR IPI', 'CONFERÊNCIA VALOR IPI', conf_val_ipi_valores)
 
-        st.success("✅ Processamento concluído com sucesso!")
-        st.dataframe(df_detalhe.head())
+        st.success("✅ Tudo pronto!")
+        st.dataframe(df_detalhe.head(10))
 
-        # --- DOWNLOAD DA PLANILHA ---
+        # --- BOTÃO DE DOWNLOAD ---
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_detalhe.to_excel(writer, index=False, sheet_name='Detalhamento')
@@ -82,9 +85,10 @@ if uploaded_file:
         st.download_button(
             label="📥 Baixar Planilha Processada",
             data=output.getvalue(),
-            file_name="Fechamento_Conferido.xlsx",
+            file_name="Resultado_Conferencia.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
     except Exception as e:
         st.error(f"Erro ao processar: {e}")
+        st.info("Dica: Verifique se as abas se chamam 'Detalhamento' e 'Grade' e se a coluna 'CHAVE' existe nas duas.")
