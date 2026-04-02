@@ -5,7 +5,7 @@ from io import BytesIO
 st.set_page_config(page_title="Automação de Fechamento", layout="wide")
 
 st.title("📊 Automação de Conferência Fiscal Completa")
-st.markdown("Arraste sua planilha aqui para processar as colunas de conferência de ICMS, IPI, PIS e COFINS.")
+st.markdown("Processamento de ICMS, IPI, PIS e COFINS com regras de exceção por CFOP.")
 
 def inserir_coluna_ao_lado(df, coluna_referencia, nova_coluna, valores):
     if coluna_referencia in df.columns:
@@ -26,7 +26,14 @@ if uploaded_file:
         df_detalhe = pd.read_excel(uploaded_file, sheet_name=aba_detalhe, dtype=str)
         df_grade = pd.read_excel(uploaded_file, sheet_name=aba_grade, dtype=str)
 
-        st.info("Planilha carregada! Processando cálculos fiscais...")
+        st.info("Planilha carregada! Aplicando regras de negócio e exceções...")
+
+        # --- LISTA DE EXCEÇÕES CFOP (ALÍQUOTA 0) ---
+        cfops_excecao = [
+            '1301', '1303', '1551', '1556', '1905', '1908', '1911', '1916', '1920', '1933',
+            '2551', '2556', '2911', '5152', '5502', '5551', '5906', '5908', '5909', '5911',
+            '5921', '6551', '6908', '6911', '6915', '7102'
+        ]
 
         # --- PREPARAÇÃO DOS DADOS NO DETALHAMENTO ---
         cols_calculo = [
@@ -49,30 +56,38 @@ if uploaded_file:
 
         # Cruzamento de dados
         df_temp = pd.merge(
-            df_detalhe[['CHAVE']], 
+            df_detalhe[['CHAVE', 'CFOP']], 
             df_grade_resumo, 
             left_on='CHAVE', 
             right_on='CHAVE_BUSCA', 
             how='left'
         )
 
-        # --- CÁLCULOS ICMS ---
-        aliq_icms_grade = df_temp['ICMS_GRADE_VAL']
-        conf_aliq_icms = df_detalhe['ALIQUOTA ICMS'] == df_temp['ICMS_GRADE_VAL']
+        # --- APLICANDO REGRA DE EXCEÇÃO CFOP ---
+        # Criamos a série da alíquota ICMS Grade
+        aliq_icms_grade = df_temp['ICMS_GRADE_VAL'].copy()
+        
+        # Se o CFOP da linha estiver na lista de exceção, força 0
+        # Fazemos um strip() para garantir que espaços no Excel não estraguem a comparação
+        df_temp['CFOP_CLEAN'] = df_temp['CFOP'].astype(str).str.strip()
+        aliq_icms_grade.loc[df_temp['CFOP_CLEAN'].isin(cfops_excecao)] = 0
+
+        # --- DEMAIS CÁLCULOS ---
+        # ICMS
+        conf_aliq_icms = df_detalhe['ALIQUOTA ICMS'] == aliq_icms_grade
         conf_val_icms = (df_detalhe['BASE DE CALCULO ICMS'] * (df_detalhe['ALIQUOTA ICMS'] / 100)) - df_detalhe['VALOR ICMS']
 
-        # --- CÁLCULOS IPI ---
+        # IPI
         aliq_ipi_grade = df_temp['IPI_GRADE_VAL']
         conf_aliq_ipi = df_detalhe['ALIQUOTA IPI'] == df_temp['IPI_GRADE_VAL']
         conf_val_ipi = (df_detalhe['BASE DE CALCULO IPI'] * (df_detalhe['ALIQUOTA IPI'] / 100)) - df_detalhe['VALOR IPI']
 
-        # --- CÁLCULOS PIS ---
+        # PIS
         aliq_pis_grade = df_temp['PIS_GRADE_VAL']
         conf_aliq_pis = df_detalhe['ALIQUOTA PIS'] == df_temp['PIS_GRADE_VAL']
         conf_val_pis = (df_detalhe['BASE DE CALCULO PIS'] * (df_detalhe['ALIQUOTA PIS'] / 100)) - df_detalhe['VALOR PIS']
 
-        # --- CÁLCULO COFINS ---
-        # Fórmula: (BASE COFINS * ALIQUOTA COFINS %) - VALOR COFINS
+        # COFINS
         conf_val_cofins = (df_detalhe['BASE DE CALCULO COFINS'] * (df_detalhe['ALIQUOTA COFINS'] / 100)) - df_detalhe['VALOR COFINS']
 
         # --- LIMPEZA DE COLUNAS ANTERIORES ---
@@ -86,26 +101,22 @@ if uploaded_file:
             if c in df_detalhe.columns:
                 df_detalhe.drop(columns=[c], inplace=True)
 
-        # --- INSERÇÃO DAS COLUNAS ---
-        # ICMS
+        # --- INSERÇÃO DAS COLUNAS NO DF ---
         inserir_coluna_ao_lado(df_detalhe, 'ALIQUOTA ICMS', 'ALÍQUOTA ICMS GRADE', aliq_icms_grade)
         inserir_coluna_ao_lado(df_detalhe, 'ALÍQUOTA ICMS GRADE', 'CONFERÊNCIA ALÍQUOTA ICMS', conf_aliq_icms)
         inserir_coluna_ao_lado(df_detalhe, 'VALOR ICMS', 'CONFERÊNCIA VALOR ICMS', conf_val_icms)
 
-        # IPI
         inserir_coluna_ao_lado(df_detalhe, 'ALIQUOTA IPI', 'ALIQUOTA IPI GRADE', aliq_ipi_grade)
         inserir_coluna_ao_lado(df_detalhe, 'ALIQUOTA IPI GRADE', 'CONFERÊNCIA ALÍQUOTA IPI', conf_aliq_ipi)
         inserir_coluna_ao_lado(df_detalhe, 'VALOR IPI', 'CONFERÊNCIA VALOR IPI', conf_val_ipi)
 
-        # PIS
         inserir_coluna_ao_lado(df_detalhe, 'ALIQUOTA PIS', 'ALIQUOTA PIS GRADE', aliq_pis_grade)
         inserir_coluna_ao_lado(df_detalhe, 'ALIQUOTA PIS GRADE', 'CONFERÊNCIA ALÍQUOTA PIS', conf_aliq_pis)
         inserir_coluna_ao_lado(df_detalhe, 'VALOR PIS', 'CONFERÊNCIA VALOR PIS', conf_val_pis)
 
-        # COFINS (Inserido após VALOR COFINS)
         inserir_coluna_ao_lado(df_detalhe, 'VALOR COFINS', 'CONFERÊNCIA VALOR COFINS', conf_val_cofins)
 
-        st.success("✅ Conferência de ICMS, IPI, PIS e COFINS finalizada!")
+        st.success("✅ Processamento concluído com as exceções de CFOP aplicadas!")
         st.dataframe(df_detalhe.head(50))
 
         output = BytesIO()
@@ -116,7 +127,7 @@ if uploaded_file:
         st.download_button(
             label="📥 Baixar Planilha Processada",
             data=output.getvalue(),
-            file_name="Conferencia_Fiscal_Total.xlsx",
+            file_name="Conferencia_Fiscal_Excecao_CFOP.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
