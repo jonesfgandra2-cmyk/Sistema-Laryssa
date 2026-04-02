@@ -26,7 +26,7 @@ if uploaded_file:
         df_detalhe = pd.read_excel(uploaded_file, sheet_name=aba_detalhe, dtype=str)
         df_grade = pd.read_excel(uploaded_file, sheet_name=aba_grade, dtype=str)
 
-        st.info("Planilha carregada! Aplicando regras de exceção de CFOP...")
+        st.info("Planilha carregada! Aplicando regras de exceção de CFOP para ICMS, IPI e PIS...")
 
         # --- LISTAS DE EXCEÇÕES CFOP (FORÇAR ALÍQUOTA 0 NA GRADE) ---
         cfops_icms_zero = [
@@ -39,6 +39,12 @@ if uploaded_file:
             '1301', '1303', '1551', '1556', '1905', '1908', '1911', '1916', '1920', '1933',
             '2551', '2556', '2911', '5502', '5551', '5906', '5908', '5909', '5911', '5921',
             '6551', '6908', '6911', '6915', '7102'
+        ]
+
+        cfops_pis_zero = [
+            '1301', '1303', '1551', '1556', '1905', '1908', '1911', '1916', '1920', '1933',
+            '2551', '2556', '2911', '5502', '5551', '5906', '5908', '5909', '5911', '5921',
+            '6551', '6908', '6911', '6915', '7102', '5152', '5910', '6910'
         ]
 
         # --- PREPARAÇÃO DOS DADOS ---
@@ -79,6 +85,10 @@ if uploaded_file:
         aliq_ipi_grade = df_temp['IPI_GRADE_VAL'].copy()
         aliq_ipi_grade.loc[df_temp['CFOP_CLEAN'].isin(cfops_ipi_zero)] = 0
 
+        # --- APLICANDO EXCEÇÕES PIS ---
+        aliq_pis_grade = df_temp['PIS_GRADE_VAL'].copy()
+        aliq_pis_grade.loc[df_temp['CFOP_CLEAN'].isin(cfops_pis_zero)] = 0
+
         # --- CÁLCULOS ---
         # ICMS
         conf_aliq_icms = df_detalhe['ALIQUOTA ICMS'] == aliq_icms_grade
@@ -89,7 +99,6 @@ if uploaded_file:
         conf_val_ipi = (df_detalhe['BASE DE CALCULO IPI'] * (df_detalhe['ALIQUOTA IPI'] / 100)) - df_detalhe['VALOR IPI']
 
         # PIS
-        aliq_pis_grade = df_temp['PIS_GRADE_VAL']
         conf_aliq_pis = df_detalhe['ALIQUOTA PIS'] == aliq_pis_grade
         conf_val_pis = (df_detalhe['BASE DE CALCULO PIS'] * (df_detalhe['ALIQUOTA PIS'] / 100)) - df_detalhe['VALOR PIS']
 
@@ -122,7 +131,7 @@ if uploaded_file:
 
         inserir_coluna_ao_lado(df_detalhe, 'VALOR COFINS', 'CONFERÊNCIA VALOR COFINS', conf_val_cofins)
 
-        st.success("✅ Processamento finalizado! Exceções de CFOP aplicadas para ICMS e IPI.")
+        st.success("✅ Processamento finalizado! Exceções de CFOP aplicadas para ICMS, IPI e PIS.")
         st.dataframe(df_detalhe.head(50))
 
         output = BytesIO()
@@ -130,7 +139,7 @@ if uploaded_file:
             df_detalhe.to_excel(writer, index=False, sheet_name='Detalhamento')
             df_grade.to_excel(writer, index=False, sheet_name='Grade')
         
-        st.download_button(label="📥 Baixar Planilha Processada", data=output.getvalue(), file_name="Conferencia_Final_Excecoes.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(label="📥 Baixar Planilha Processada", data=output.getvalue(), file_name="Conferencia_Final_Fiscal.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     except Exception as e:
         st.error(f"Erro ao processar: {e}")
